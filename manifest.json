@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "110",
+  "name": "Tokenlens",
+  "version": "0.1.0",
+  "description": "Live token and cost estimates inside the chat box of Claude, ChatGPT, Gemini, DeepSeek and more.",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "Tokenlens",
+    "default_popup": "popup/popup.html"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.frankfurter.dev/*"],
+  "background": {
+    "service_worker": "src/background.js",
+    "scripts": ["src/background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://chat.deepseek.com/*",
+        "https://grok.com/*",
+        "https://www.perplexity.ai/*",
+        "https://chat.mistral.ai/*"
+      ],
+      "js": [
+        "src/data.js",
+        "src/estimate.js",
+        "src/predict.js",
+        "src/trim.js",
+        "src/sites.js",
+        "src/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "{d456ac7b-8afa-4d30-b606-f21ef921b523}",
+      "strict_min_version": "140.0"
+    }
+  }
+}

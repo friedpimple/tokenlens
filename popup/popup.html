@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tokenlens</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>Tokenlens</h1>
+    <span id="status" class="mut" aria-live="polite"></span>
+  </header>
+
+  <section>
+    <h2>Last 7 days</h2>
+    <div id="chart" class="chart" role="img" aria-label="Estimated tokens per day"></div>
+    <p class="mut small" id="today"></p>
+  </section>
+
+  <section class="fields">
+    <label>
+      <span>Currency</span>
+      <select id="currency"></select>
+    </label>
+    <p class="mut small" id="fxnote"></p>
+    <label>
+      <span>Daily token budget</span>
+      <input id="budget" type="number" min="0" step="1000" placeholder="Off">
+    </label>
+  </section>
+
+  <details>
+    <summary>Model prices <span class="mut">USD per 1M tokens</span></summary>
+    <div id="prices" class="prices"></div>
+    <p class="mut small" id="unverified-note" hidden>* not confirmed from an official page, please check.</p>
+    <button id="reset-prices" type="button" class="link">Restore defaults</button>
+  </details>
+
+  <footer>
+    <button id="reset-learned" type="button" class="link">Forget learned reply lengths</button>
+  </footer>
+
+  <script src="../src/data.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
