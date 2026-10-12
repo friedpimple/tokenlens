@@ -4,6 +4,10 @@ A small browser extension that adds a live token and cost meter to the chat box 
 
 It answers the question those sites don't: *how much of my limit is this message about to burn?*
 
+![Tokenlens counting a prompt as it is typed, then trimming it from 24 to 13 tokens](docs/demo.gif)
+
+**Private by design:** no account, no analytics, no server. Your prompts never leave the browser.
+
 ## What it does
 
 - **Live estimate** next to the chat box: tokens for what you're typing, plus the conversation so far (every message re-sends the whole thread, which is where limits quietly disappear), plus a predicted reply length.
