@@ -4,10 +4,13 @@
   // Providers use different tokenizers and none ship one we can run in a page,
   // so this is a structural estimate, not an exact count. For English prose it
   // lands within roughly 15% of the common BPE tokenizers.
+  const CJK = '[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af]';
+  // A word stops where CJK text starts, so "hello世界" counts both parts.
+  const LETTER = `(?:(?!${CJK})[\\p{L}\\p{M}])`;
   const TOKEN_RE = new RegExp(
     [
-      '(?<cjk>[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af]+)',
-      "(?<word>[\\p{L}\\p{M}]+(?:['\\u2019][\\p{L}]+)?)",
+      `(?<cjk>${CJK}+)`,
+      `(?<word>${LETTER}+(?:['\\u2019]${LETTER}+)?)`,
       '(?<num>\\p{N}+)',
       '(?<nl>\\n+)',
       '(?<emo>\\p{Extended_Pictographic}\\uFE0F?)',

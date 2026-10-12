@@ -11,7 +11,11 @@ function flash(text) {
   flashTimer = setTimeout(() => ($('#status').textContent = ''), 1400);
 }
 
-async function save() {
+// Applies `patch` on top of the stored settings, not the copy loaded when the
+// popup opened, so a model picked on the page meanwhile is not overwritten.
+async function save(patch) {
+  const { cfg } = await api.storage.local.get('cfg');
+  Object.assign(state.cfg, cfg, patch);
   await api.storage.local.set({ cfg: state.cfg });
   flash('Saved');
 }
@@ -85,13 +89,13 @@ function renderPrices() {
       el.value = current[idx];
       el.setAttribute('aria-label', `${m.label} ${idx ? 'output' : 'input'} price`);
       el.addEventListener('change', () => {
-        const next = inputs.map((i) => Number(i.value));
+        // An emptied box means nothing was entered, not a price of 0.
+        const next = inputs.map((i) => (i.value.trim() === '' ? NaN : Number(i.value)));
         if (next.some((n) => !Number.isFinite(n) || n < 0)) return renderPrices();
         const overrides = { ...state.cfg.overrides };
         if (next[0] === m.price[0] && next[1] === m.price[1]) delete overrides[m.id];
         else overrides[m.id] = next;
-        state.cfg.overrides = overrides;
-        save();
+        save({ overrides });
       });
       return el;
     });
@@ -111,17 +115,15 @@ async function init() {
   $('#budget').value = state.cfg.dailyBudget || '';
 
   $('#currency').addEventListener('change', (e) => {
-    state.cfg.currency = e.target.value;
-    save();
+    save({ currency: e.target.value });
   });
   $('#budget').addEventListener('change', (e) => {
-    state.cfg.dailyBudget = Math.max(0, Math.round(Number(e.target.value) || 0));
-    save();
+    save({ dailyBudget: Math.max(0, Math.round(Number(e.target.value) || 0)) });
   });
   $('#reset-prices').addEventListener('click', () => {
     state.cfg.overrides = {};
     renderPrices();
-    save();
+    save({ overrides: {} });
   });
   $('#reset-learned').addEventListener('click', async () => {
     await api.storage.local.set({ learned: {} });

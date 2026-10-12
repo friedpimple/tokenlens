@@ -36,6 +36,9 @@ test('countTokens: contractions, numbers, CJK', () => {
 test('countTokens: long words split', () => {
   assert.ok(TL.countTokens('internationalization') >= 4);
 });
+test('countTokens: CJK touching Latin text is counted in full', () => {
+  assert.strictEqual(TL.countTokens('hello世界'), TL.countTokens('hello 世界'));
+});
 test('countTokens: scales roughly with length', () => {
   const para = 'Large language models read text as tokens, and every message in a thread is sent again. '.repeat(50);
   const n = TL.countTokens(para);
@@ -92,6 +95,12 @@ test('trim: never increases token count', () => {
     assert.ok(TL.countTokens(TL.trim(s).text) <= TL.countTokens(s), s);
   }
 });
+test('trim: keeps "thanks" and filler words that are the subject', () => {
+  for (const t of ['How do I say thank you', 'Translate to French: thanks a lot', 'Thanks', "What does the word 'honestly' mean?", 'How do I use basically in a sentence?']) {
+    assert.strictEqual(TL.trim(t).changed, false, t);
+  }
+  assert.strictEqual(TL.trim('Fix my essay. Thanks!').text, 'Fix my essay.');
+});
 
 const predict = (t, l = {}, m = 'm') => TL.predictReply(t, TL.countTokens(t), l, m);
 test('predict: reply length depends on the request', () => {
@@ -111,6 +120,10 @@ test('predict: numbers about the input are not length requests', () => {
   assert.notStrictEqual(predict('I have 2 sentences I need translated').kind, 'explicit');
   assert.strictEqual(predict('Write a 500-word essay on rivers').kind, 'explicit');
   assert.strictEqual(predict('Explain it in a couple of sentences').tokens, 56);
+});
+test('predict: numbers with thousands separators', () => {
+  assert.strictEqual(predict('Write an essay in 1,000 words about rivers').tokens, 1350);
+  assert.strictEqual(predict('Write a 1,500-word essay about rivers').tokens, 2025);
 });
 test('predict: brief and detailed modifiers', () => {
   assert.ok(predict('Briefly explain how DNS works').tokens < predict('Explain how DNS works').tokens);
@@ -236,6 +249,9 @@ test('format helpers', () => {
   assert.strictEqual(TL.fmtTokens(1200), '1.2k');
   assert.strictEqual(TL.fmtTokens(48200), '48k');
   assert.strictEqual(TL.fmtTokens(1500000), '1.5M');
+  assert.strictEqual(TL.fmtTokens(999.6), '1k');
+  assert.strictEqual(TL.fmtTokens(9960), '10k');
+  assert.strictEqual(TL.fmtTokens(999600), '1M');
   assert.ok(/0\.0041/.test(TL.fmtMoney(0.00412, 'USD')));
 });
 

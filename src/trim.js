@@ -28,7 +28,8 @@
     [at(`i (?:want|need) you to (?=(?:${REQUEST_VERBS})\\b)`), ''],
     [at('please,?\\s+'), ''],
     [anywhere(',?\\s+please(?=\\s*[.!?]|\\s*$)'), ''],
-    [anywhere('\\b(?:basically|honestly|obviously)\\b,?\\s*'), ''],
+    // ...but not when the word itself is the subject ("the word 'honestly'").
+    [anywhere("(?<!\\b(?:word|say|says|saying|said|use|using|define|meaning of|means?)\\s+|['\\u2018\\u201c])\\b(?:basically|honestly|obviously)\\b(?!['\\u2019\\u201d]),?\\s*"), ''],
     [anywhere('\\bi mean,\\s*'), ''],
     [anywhere("\\bit(?: is|'s) (?:important|worth) (?:to note|noting) that\\b,?\\s*"), ''],
     [anywhere('\\bneedless to say\\b,?\\s*'), ''],
@@ -38,9 +39,11 @@
     [anywhere('\\bin the event that\\b'), 'if'],
   ];
 
+  // Sign-offs are only dropped when they stand on their own after a sentence,
+  // so "How do I say thank you" and "Translate: thanks a lot" are kept.
   const TAIL = [
-    /(?:\s*(?:thanks|thank you)(?: so much| very much| a lot)?(?: in advance)?[.!]*)+\s*$/i,
-    /\s*(?:i hope (?:this|that) makes sense|let me know if you (?:have|need) (?:any )?(?:questions|more (?:info|information|context)))[.!]*\s*$/i,
+    /(?<=[.!?\n])(?:\s*(?:thanks|thank you)(?: so much| very much| a lot)?(?: in advance)?[.!]*)+\s*$/i,
+    /(?<=[.!?\n])\s*(?:i hope (?:this|that) makes sense|let me know if you (?:have|need) (?:any )?(?:questions|more (?:info|information|context)))[.!]*\s*$/i,
   ];
 
   const startsSentence = (whole, offset, first) => {

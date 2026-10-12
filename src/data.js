@@ -8,13 +8,12 @@
   TL.PRICES_CHECKED = '2026-10-12';
 
   TL.MODELS = [
-    // Claude. 1M context applies to 4.6 and later except Haiku 5.5, whose
-    // window was not stated (200k assumed for the gauge only). Haiku 5.5 is
-    // priced by prompt length: the `tier` rate applies above 100k tokens.
+    // Claude. 1M context applies to 4.6 and later. Haiku 5.5 is priced by
+    // prompt length: the `tier` rate applies above 100k tokens.
     { id: 'claude-fable',  vendor: 'claude', label: 'Claude Fable',  price: [10, 50],  ctx: 1000000, match: /fable|mythos/i },
     { id: 'claude-opus',   vendor: 'claude', label: 'Claude Opus',   price: [4, 20],   ctx: 1000000, match: /opus/i },
     { id: 'claude-sonnet', vendor: 'claude', label: 'Claude Sonnet', price: [2, 10],   ctx: 1000000, match: /sonnet/i },
-    { id: 'claude-haiku',  vendor: 'claude', label: 'Claude Haiku',  price: [0.1, 0.5], tier: { over: 100000, price: [0.5, 2.5] }, ctx: 200000, match: /haiku/i },
+    { id: 'claude-haiku',  vendor: 'claude', label: 'Claude Haiku',  price: [0.1, 0.5], tier: { over: 100000, price: [0.5, 2.5] }, ctx: 1000000, match: /haiku/i },
 
     // OpenAI. ChatGPT itself runs GPT-5.6: Luna for free users, Sol on paid
     // plans. GPT-5.6 Sol is on OpenAI's pricing page (promotional rate, at
@@ -90,10 +89,12 @@
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   TL.today = () => TL.dayKey();
 
+  // Thresholds sit where rounding would carry into the next unit, so 999.6
+  // reads "1k" and 999,600 reads "1M" rather than "1000" and "1000k".
   TL.fmtTokens = (n) => {
-    if (n < 1000) return String(Math.round(n));
-    if (n < 10000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-    if (n < 1e6) return Math.round(n / 1000) + 'k';
+    if (n < 999.5) return String(Math.round(n));
+    if (n < 9950) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    if (n < 999500) return Math.round(n / 1000) + 'k';
     return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
   };
 

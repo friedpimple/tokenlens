@@ -68,8 +68,10 @@
   }
 
   function classify(text, promptTokens, lastReply = 0) {
+    // "1,500 words" is 1500, not 500 (or 0 from the "000" after the comma).
+    const plain = text.replace(/(\d),(?=\d{3}\b)/g, '$1');
     for (const [re, per] of EXPLICIT) {
-      const m = text.match(re);
+      const m = plain.match(re);
       if (m) return { kind: 'explicit', label: 'requested length', prior: Math.max(3, toNum(m[1]) * per), exact: true };
     }
     let prior;

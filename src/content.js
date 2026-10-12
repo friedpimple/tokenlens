@@ -631,7 +631,15 @@
 
   // -------------------------------------------------------- usage tracking
 
+  // Other tabs write these too, so start from what is stored now rather than
+  // this tab's copy, or the last tab to write would erase the others' counts.
+  async function fresh(key) {
+    const { [key]: v } = await api.storage.local.get(key);
+    state[key] = v && typeof v === 'object' ? v : {};
+  }
+
   async function addUsage(tokens) {
+    await fresh('usage');
     const day = TL.today();
     state.usage[day] = (state.usage[day] ?? 0) + Math.round(tokens);
     // Keep a rolling window so storage stays small.
@@ -643,6 +651,7 @@
 
   async function learnReply(modelId, pred, tokens) {
     if (tokens < 5 || tokens > 60000) return;
+    await fresh('learned');
     TL.learnReply(state.learned, modelId, pred.kind, pred.prior, tokens);
     await persist(['learned']);
   }
@@ -667,19 +676,28 @@
 
       if (!before.known) {
         // The page's messages can't be read, so keep our own running tally.
-        state.local += prompt + pred.tokens;
-        state.ctx = state.local;
-        await addUsage(prompt);
+        // Count it the same way as below: the whole thread is re-sent, plus
+        // the reply (predicted, since it can't be measured).
+        const turn = state.local + prompt + pred.tokens;
+        state.local = turn;
+        state.ctx = turn;
+        await addUsage(turn);
         return;
       }
 
       const sent = before.tokens + prompt;
+      const path = location.pathname;
       let last = -1;
       let stable = 0;
       let grew = false;
+      let settled = false;
       for (let i = 0; i < 120; i++) {
         await sleep(1500);
+        // Moved to another chat, or the page dropped messages from view:
+        // whatever is measured now is not this reply.
+        if (location.pathname !== path) return;
         const now = readContext().tokens;
+        if (now < before.tokens) return;
         if (!grew && now > before.tokens) {
           grew = true;
           await addUsage(sent);
@@ -690,13 +708,18 @@
         // Wait for the reply itself, not just the echoed prompt: thinking
         // models can sit silent for a while before they start streaming.
         // Give up waiting for a reply that never starts after about a minute.
-        if (grew && stable >= 4 && (now > sent + 5 || stable >= 40)) break;
+        if (grew && stable >= 4 && (now > sent + 5 || stable >= 40)) {
+          settled = true;
+          break;
+        }
       }
       if (grew) {
         const reply = Math.max(0, last - sent);
         if (reply >= 5) state.lastReply = reply;
         await addUsage(reply);
-        await learnReply(model.id, pred, reply);
+        // A reply still streaming when we stopped watching is only partly
+        // measured; learning from it would teach a too-short length.
+        if (settled) await learnReply(model.id, pred, reply);
       }
     } finally {
       state.tracking = false;
