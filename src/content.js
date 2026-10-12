@@ -143,12 +143,20 @@
   function readInput() {
     const el = state.input;
     if (!el) return '';
-    return 'value' in el ? el.value : el.innerText.replace(/\u200b/g, '');
+    if ('value' in el) return el.value;
+    // Rich editors keep each line in its own block, which innerText separates
+    // with blank lines; read the blocks so a round trip keeps the text.
+    const blocks = el.querySelectorAll(':scope > p, :scope > div');
+    const text = blocks.length ? Array.from(blocks, (b) => b.innerText.replace(/\n$/, '')).join('\n') : el.innerText;
+    return text.replace(/\u200b/g, '');
   }
 
-  function writeInput(text) {
+  const norm = (t) => t.replace(/\u200b|\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Replace the whole contents of the box. Returns true when it took.
+  async function writeInput(text) {
     const el = state.input;
-    if (!el) return;
+    if (!el) return false;
     if ('value' in el) {
       // React and similar frameworks track the value themselves and ignore a
       // plain assignment, so go through the native setter.
@@ -158,14 +166,40 @@
       else el.value = text;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.focus();
-      return;
+      return true;
     }
-    el.focus();
-    document.execCommand('selectAll');
+    const want = norm(text);
+    const selectAll = async () => {
+      el.focus();
+      const sel = getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      // Editors such as ProseMirror copy the DOM selection into their own
+      // state asynchronously; edit before that and the text lands at the old
+      // cursor instead of replacing the selection.
+      await sleep(60);
+    };
+    // 1. Typed-in text, line by line: works with editors that handle
+    //    beforeinput/execCommand themselves.
+    await selectAll();
+    document.execCommand('delete');
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+      if (i) document.execCommand('insertParagraph');
+      if (line) document.execCommand('insertText', false, line);
+    });
+    await sleep(80);
+    if (norm(readInput()) === want) return true;
+    // 2. A paste event carrying the text.
+    await selectAll();
     const dt = new DataTransfer();
     dt.setData('text/plain', text);
     const paste = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
     if (el.dispatchEvent(paste)) document.execCommand('insertText', false, text);
+    await sleep(80);
+    return norm(readInput()) === want;
   }
 
   const messageSelector = site.messages.join(',');
@@ -228,11 +262,12 @@
     .ticks.wide { display: flex; gap: 3px; }
     .ticks.wide i { flex: 1; width: auto; height: 12px; border-radius: 2px; }
 
+    :host([data-flip]) .panel { bottom: auto; top: calc(100% + 8px); }
     .panel { position: absolute; right: 0; bottom: calc(100% + 8px); width: 320px; padding: 16px;
       background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 16px;
       box-shadow: 0 2px 6px rgba(22,24,29,.06), 0 18px 48px rgba(22,24,29,.16);
       transform-origin: bottom right; animation: pop .14s ease-out;
-      max-height: min(560px, calc(100vh - 96px)); overflow-y: auto; }
+      max-height: min(560px, var(--avail, calc(100vh - 96px))); overflow-y: auto; }
     @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.98); } }
     @media (prefers-reduced-motion: reduce) { .panel { animation: none; } .chip { transition: none; } }
 
@@ -533,20 +568,34 @@
     fillModelSelect(model);
   }
 
-  function applyTrim() {
+  async function applyTrim() {
     const original = readInput();
     const { text, changed } = TL.trim(original);
     if (!changed) return;
-    state.undo = original;
-    writeInput(text);
+    if (await writeInput(text)) state.undo = original;
+    else copyFallback(text);
     setTimeout(refresh, 50);
   }
 
-  function undoTrim() {
+  async function undoTrim() {
     if (state.undo == null) return;
-    writeInput(state.undo);
-    state.undo = null;
+    const original = state.undo;
+    if (await writeInput(original)) state.undo = null;
+    else copyFallback(original);
     setTimeout(refresh, 50);
+  }
+
+  function flash(msg) {
+    ui.trim.textContent = msg;
+    setTimeout(refresh, 2200);
+  }
+
+  // The editor refused the edit: put the text on the clipboard instead.
+  function copyFallback(text) {
+    navigator.clipboard?.writeText(text).then(
+      () => flash('Copied, paste it in'),
+      () => flash("Couldn't edit this box"),
+    );
   }
 
   // -------------------------------------------------------- usage tracking
@@ -619,6 +668,8 @@
   // ------------------------------------------------------------- placement
 
   let placing = false;
+  let watched = null;
+  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => place()) : null;
   function place() {
     if (placing) return;
     placing = true;
@@ -628,7 +679,21 @@
       if (!root || !root.isConnected) return;
       const r = root.getBoundingClientRect();
       host.style.right = `${Math.max(8, innerWidth - r.right)}px`;
-      host.style.bottom = `${Math.max(8, innerHeight - r.top + 6)}px`;
+      const bottom = Math.max(8, innerHeight - r.top + 6);
+      host.style.bottom = `${bottom}px`;
+      // Room for the panel. Above the chip normally; when a tall composer
+      // pushes the chip near the top of the window, open it downward instead.
+      const above = innerHeight - bottom - 40;
+      const below = bottom - 8;
+      const flip = above < 300 && below > above;
+      host.toggleAttribute('data-flip', flip);
+      host.style.setProperty('--avail', `${Math.max(160, (flip ? below : above) - 12)}px`);
+      if (ro && watched !== root) {
+        ro.disconnect();
+        ro.observe(root);
+        if (state.input) ro.observe(state.input);
+        watched = root;
+      }
     });
   }
 
@@ -645,7 +710,10 @@
     place();
   }, 350, 1200);
 
-  const onType = debounce(refresh, 120);
+  const onType = debounce(() => {
+    refresh();
+    place();
+  }, 120);
 
   // ------------------------------------------------------------------- boot
 

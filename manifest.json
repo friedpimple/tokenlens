@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "110",
   "name": "Tokenlens",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Live token and cost estimates inside the chat box of Claude, ChatGPT, Gemini, DeepSeek and more.",
   "icons": {
     "16": "icons/16.png",
