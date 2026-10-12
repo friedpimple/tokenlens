@@ -14,9 +14,13 @@
     input: null,
     ctx: 0,
     ctxKnown: false,
+    lastReply: 0, // tokens in the most recent measured reply of this chat
+    local: 0, // tokens we have seen sent when the page's messages can't be read
+    path: location.pathname,
     undo: null,
     open: false,
     tracking: false,
+    flashUntil: 0,
   };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -199,6 +203,21 @@
     const paste = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
     if (el.dispatchEvent(paste)) document.execCommand('insertText', false, text);
     await sleep(80);
+    if (norm(readInput()) === want) return true;
+    // 3. Rewrite the blocks directly. ProseMirror-style editors watch their
+    //    own DOM and adopt the change, which works even when they ignore
+    //    synthetic input events.
+    const doc = el.ownerDocument;
+    el.replaceChildren(
+      ...text.split('\n').map((line) => {
+        const p = doc.createElement('p');
+        if (line) p.textContent = line;
+        else p.append(doc.createElement('br'));
+        return p;
+      }),
+    );
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(250);
     return norm(readInput()) === want;
   }
 
@@ -482,13 +501,15 @@
 
   const num = (n) => Math.round(n).toLocaleString();
 
+  const isConversation = (path) => /\/(chat|c|app|conversation|thread|search)\/[\w-]{8,}|[0-9a-f]{8}-[0-9a-f]{4}-/i.test(path);
+
   function refresh() {
     if (!state.input) return;
     const model = resolveModel();
     const text = readInput();
     if (!text.trim()) state.undo = null;
     const prompt = TL.countTokens(text.trim());
-    const pred = TL.predictReply(text.trim(), prompt, state.learned, model.id);
+    const pred = TL.predictReply(text.trim(), prompt, state.learned, model.id, state.lastReply);
     const reply = pred.tokens;
     const sent = state.ctx + prompt;
     const total = sent + reply;
@@ -497,7 +518,10 @@
     const usd = (sent * rateIn + reply * rateOut) / 1e6;
     const pct = Math.min(1, sent / model.ctx);
 
-    const started = Boolean(prompt || state.ctx);
+    // A conversation URL whose messages can't be read means the site's markup
+    // has changed; say so rather than claiming the chat hasn't started.
+    const lost = !state.ctx && !state.ctxKnown && isConversation(location.pathname);
+    const started = Boolean(prompt || state.ctx || lost);
     ui.n.className = `n${started ? '' : ' empty'}`;
     if (prompt) {
       ui.n.replaceChildren(
@@ -508,6 +532,8 @@
       );
     } else if (state.ctx) {
       ui.n.replaceChildren(TL.fmtTokens(state.ctx), h('span', { class: 'dim unit' }, ' in thread'));
+    } else if (lost) {
+      ui.n.textContent = 'Thread unavailable';
     } else {
       ui.n.textContent = 'Type your first prompt';
     }
@@ -536,7 +562,7 @@
       el.style.flexGrow = String(Math.max(v, 0));
       el.style.flexBasis = '0';
     }
-    ui.kThread.v.textContent = state.ctxKnown ? num(state.ctx) : 'unavailable';
+    ui.kThread.v.textContent = state.ctxKnown ? num(state.ctx) : state.ctx ? `≈${num(state.ctx)}` : 'unavailable';
     ui.kPrompt.v.textContent = num(prompt);
     ui.kReply.k.textContent = `Expected reply · ${pred.label}`;
     ui.kReply.v.textContent = prompt ? `~${num(reply)}` : '–';
@@ -562,7 +588,9 @@
     const trimmed = TL.trim(text);
     const saved = trimmed.changed ? TL.countTokens(text.trim()) - TL.countTokens(trimmed.text) : 0;
     ui.trim.disabled = saved < 1;
-    ui.trim.textContent = saved >= 1 ? `Trim filler · −${saved}` : prompt ? 'Already tight' : 'Trim filler';
+    if (Date.now() >= state.flashUntil) {
+      ui.trim.textContent = saved >= 1 ? `Trim filler · −${saved}` : prompt ? 'Already tight' : 'Trim filler';
+    }
     ui.undo.hidden = !state.undo;
 
     fillModelSelect(model);
@@ -585,9 +613,12 @@
     setTimeout(refresh, 50);
   }
 
+  // Shows a short message on the Trim button; refreshes leave it alone until
+  // it expires.
   function flash(msg) {
+    state.flashUntil = Date.now() + 2500;
     ui.trim.textContent = msg;
-    setTimeout(refresh, 2200);
+    setTimeout(refresh, 2600);
   }
 
   // The editor refused the edit: put the text on the clipboard instead.
@@ -622,7 +653,7 @@
     if (!text) return;
     const prompt = TL.countTokens(text);
     const model = resolveModel();
-    const pred = TL.predictReply(text, prompt, state.learned, model.id);
+    const pred = TL.predictReply(text, prompt, state.learned, model.id, state.lastReply);
     const before = readContext();
     state.undo = null;
     state.tracking = true;
@@ -635,6 +666,9 @@
       if (readInput().trim()) return;
 
       if (!before.known) {
+        // The page's messages can't be read, so keep our own running tally.
+        state.local += prompt + pred.tokens;
+        state.ctx = state.local;
         await addUsage(prompt);
         return;
       }
@@ -653,10 +687,14 @@
         if (!grew && i >= 6) return; // the page never showed the message
         stable = now === last ? stable + 1 : 0;
         last = now;
-        if (grew && stable >= 3) break;
+        // Wait for the reply itself, not just the echoed prompt: thinking
+        // models can sit silent for a while before they start streaming.
+        // Give up waiting for a reply that never starts after about a minute.
+        if (grew && stable >= 4 && (now > sent + 5 || stable >= 40)) break;
       }
       if (grew) {
         const reply = Math.max(0, last - sent);
+        if (reply >= 5) state.lastReply = reply;
         await addUsage(reply);
         await learnReply(model.id, pred, reply);
       }
@@ -703,8 +741,14 @@
     host.style.display = visible ? '' : 'none';
     if (!visible) return;
     const ctx = readContext();
-    state.ctx = ctx.tokens;
+    // Moving to a different chat (or off a chat) starts the fallback tally over.
+    if (location.pathname !== state.path) {
+      if (!isConversation(location.pathname) || isConversation(state.path)) state.local = 0;
+      state.lastReply = 0;
+      state.path = location.pathname;
+    }
     state.ctxKnown = ctx.known;
+    state.ctx = ctx.known ? ctx.tokens : state.local;
     applyTheme();
     refresh();
     place();

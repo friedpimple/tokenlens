@@ -129,10 +129,46 @@ test('predict: learns a verbose model and a repeated kind', () => {
   assert.ok(after.tokens > p.tokens * 2, `${p.tokens} -> ${after.tokens}`);
   assert.ok(after.low < after.tokens && after.tokens < after.high);
 });
+test('predict: several asks and long prompts get fuller replies', () => {
+  const one = predict('Why is the sky blue?').tokens;
+  const three = predict('Why is the sky blue? Why is the sea blue? Why are sunsets red?').tokens;
+  assert.ok(three > one * 1.5, `${one} -> ${three}`);
+  const short = predict('Explain how caching works').tokens;
+  const long = predict('Explain how caching works in our service. ' + 'We have a web tier, an API tier and a database, and requests vary a lot between users. '.repeat(8)).tokens;
+  assert.ok(long > short, `${short} -> ${long}`);
+  const list = predict('Compare these:\n1. cats\n2. dogs\n3. birds').tokens;
+  assert.ok(list > predict('Compare cats').tokens);
+});
+test('predict: follow-ups track the previous reply', () => {
+  const tp = (t, last) => TL.predictReply(t, TL.countTokens(t), {}, 'm', last);
+  assert.strictEqual(tp('continue', 800).kind, 'followup');
+  assert.strictEqual(tp('continue', 800).tokens, 800);
+  assert.strictEqual(tp('make it shorter', 800).tokens, 400);
+  assert.ok(tp('continue', 0).tokens > 0);
+  assert.notStrictEqual(tp('continue the story about the dragon and the knight', 800).kind, 'followup');
+});
+test('predict: consistent replies narrow the range, erratic ones widen it', () => {
+  const steady = {};
+  const erratic = {};
+  const p = predict('Explain how DNS works', {}, 'g');
+  for (const v of [500, 510, 495, 505, 500]) TL.learnReply(steady, 'g', p.kind, p.prior, v);
+  for (const v of [100, 1500, 150, 1200, 90]) TL.learnReply(erratic, 'g', p.kind, p.prior, v);
+  const a = predict('Explain how DNS works', steady, 'g');
+  const b = predict('Explain how DNS works', erratic, 'g');
+  assert.ok(a.high / a.low < b.high / b.low, `${a.low}-${a.high} vs ${b.low}-${b.high}`);
+  assert.ok(Math.abs(a.tokens - 500) < 100, a.tokens);
+});
 test('predict: ignores legacy numeric learned values', () => {
   assert.ok(predict('hello world question?', { m: 350 }).tokens > 0);
 });
 
+test('models: ChatGPT labels map to the right model', () => {
+  const pick = (label) => TL.MODELS.filter((m) => m.vendor === 'openai').find((m) => m.match.test(label))?.id;
+  assert.strictEqual(pick('GPT-5.6 Luna'), 'gpt-56-luna');
+  assert.strictEqual(pick('GPT-5.6 Sol'), 'gpt-56-sol');
+  assert.strictEqual(pick('GPT-6.1 Sol'), 'gpt-sol');
+  assert.strictEqual(pick('Luna'), 'gpt-luna');
+});
 test('models: every vendor has a default that exists', () => {
   const ids = new Set(TL.MODELS.map((m) => m.id));
   for (const id of Object.values(TL.DEFAULT_MODEL)) assert.ok(ids.has(id), id);

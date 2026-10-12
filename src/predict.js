@@ -1,10 +1,12 @@
 (() => {
   const TL = (globalThis.TL ??= {});
 
-  // Predicts how long the model's reply will be, in tokens, from the prompt
-  // alone: an explicit length request wins, otherwise the kind of request sets
-  // a prior. Real replies then tune a per-model verbosity multiplier and a
-  // per-kind average (see TL.learnReply).
+  // Predicts how long the model's reply will be, in tokens. An explicit length
+  // request wins. Otherwise the kind of request sets a prior, which is scaled
+  // by how much is being asked (a long prompt or several questions get fuller
+  // answers) and by the length of the previous reply for follow-ups like
+  // "continue". Real replies then tune a per-model verbosity multiplier and a
+  // per-kind average and spread (see TL.learnReply).
 
   const WORDS = { a: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, couple: 2, few: 3 };
   const NUM = '(\\d{1,5}|a couple of|a few|one|two|three|four|five|six|seven|eight|nine|ten)';
@@ -35,6 +37,12 @@
 
   const KINDS = [
     { kind: 'greeting', label: 'chat', re: /^(?:hi|hey|hello|yo|sup|thanks|thank you|ok|okay|cool|nice|lol|yes|no)\b[\s!.?,]*$/i, tokens: () => 30 },
+    {
+      kind: 'followup',
+      label: 'follow-up',
+      re: /^(?:continue|go on|keep going|more|next|and|then|why|how|really|elaborate|expand(?: on (?:that|this|it))?|can you elaborate|tell me more|make it (?:shorter|longer)|shorter|longer|simpler|again)\b[\s!.?,]*$/i,
+      tokens: (p, last, text) => (last > 0 ? last : 260) * (/shorter|simpler/i.test(text) ? 0.5 : /longer|more|elaborate|expand/i.test(text) ? 1.4 : 1),
+    },
     { kind: 'rewrite', label: 'rewrite', re: /\b(?:rewrite|rephrase|proofread|paraphrase|translate|fix (?:the |my )?grammar|correct this|improve this|edit this)\b/i, tokens: (p) => Math.max(60, p * 1.1) },
     { kind: 'summary', label: 'summary', re: /\b(?:summari[sz]e|tl;?dr|key points|main points|recap)\b/i, tokens: (p) => Math.min(450, Math.max(120, p * 0.2)) },
     { kind: 'code', label: 'code', re: /```|\b(?:code|function|script|program|bug|error|regex|sql|python|javascript|typescript|html|css|api|class|component|implement|refactor|debug|compile)\b/i, tokens: () => 550 },
@@ -48,7 +56,18 @@
 
   const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
-  function classify(text, promptTokens) {
+  const SCALED = new Set(['question', 'explain', 'list', 'write', 'code']);
+
+  // How many separate things the prompt asks for: question marks or list items.
+  // List items only count in short prompts; a long one is usually pasted
+  // material, not a list of questions.
+  function asks(text, promptTokens) {
+    const q = (text.replace(/https?:\/\/\S+/g, '').match(/\?/g) ?? []).length;
+    const items = promptTokens < 300 ? (text.match(/^\s*(?:\d+[.)]|[-*\u2022])\s+\S/gm) ?? []).length : 0;
+    return Math.min(4, Math.max(1, q, items));
+  }
+
+  function classify(text, promptTokens, lastReply = 0) {
     for (const [re, per] of EXPLICIT) {
       const m = text.match(re);
       if (m) return { kind: 'explicit', label: 'requested length', prior: Math.max(3, toNum(m[1]) * per), exact: true };
@@ -60,7 +79,7 @@
     if (hit) {
       kind = hit.kind;
       label = hit.label;
-      prior = hit.tokens(promptTokens);
+      prior = hit.tokens(promptTokens, lastReply, text);
     } else if (/\?\s*$/.test(text) || promptTokens > 6) {
       kind = 'question';
       label = 'question';
@@ -69,6 +88,11 @@
       kind = 'chat';
       label = 'chat';
       prior = 90;
+    }
+    if (SCALED.has(kind)) {
+      // Longer, more detailed prompts tend to get fuller answers.
+      if (promptTokens > 40) prior *= clamp(1 + 0.15 * Math.log2(promptTokens / 40), 1, 1.8);
+      prior *= 1 + 0.5 * (asks(text, promptTokens) - 1);
     }
     if (SHORT.test(text)) prior *= 0.5;
     else if (LONG.test(text)) prior *= 1.7;
@@ -81,8 +105,9 @@
     return v && typeof v === 'object' ? v : null;
   };
 
-  TL.predictReply = (text, promptTokens, learned, modelId) => {
-    const c = classify(text || '', promptTokens);
+  // `lastReply` (optional) is the token length of the previous reply in this chat.
+  TL.predictReply = (text, promptTokens, learned, modelId, lastReply = 0) => {
+    const c = classify(text || '', promptTokens, lastReply);
     if (c.exact) {
       return { kind: c.kind, label: c.label, prior: c.prior, tokens: Math.round(c.prior), low: Math.round(c.prior * 0.8), high: Math.round(c.prior * 1.25) };
     }
@@ -90,9 +115,12 @@
     const kinds = entry(learned, `${modelId}:${c.kind}`);
     let tokens = c.prior * (model ? model.mult : 1);
     let spread = 2;
-    if (kinds && kinds.n >= 2) {
-      tokens = tokens * 0.3 + kinds.avg * 0.7;
-      spread = 1.6;
+    if (kinds && kinds.n >= 1 && kinds.avg > 0) {
+      // Blend in log space (reply lengths are skewed), trusting the history
+      // more as it grows. The spread follows how erratic the replies were.
+      const w = Math.min(0.85, kinds.n / (kinds.n + 2));
+      tokens = Math.exp((1 - w) * Math.log(tokens) + w * Math.log(kinds.avg));
+      spread = clamp(Math.exp(0.25 + 1.5 * (kinds.dev ?? 0.35)), 1.3, 2.2);
     }
     tokens = clamp(tokens, 5, 8000);
     return {
@@ -113,8 +141,17 @@
     learned[modelId] = { mult: m.mult * (1 - a) + ratio * a, n: m.n + 1 };
     if (kind !== 'explicit') {
       const key = `${modelId}:${kind}`;
-      const k = entry(learned, key) ?? { avg: actual, n: 0 };
-      learned[key] = { avg: k.n === 0 ? actual : k.avg * 0.7 + actual * 0.3, n: k.n + 1 };
+      const a2 = Math.max(1, actual);
+      const k = entry(learned, key);
+      if (!k || !(k.avg > 0)) learned[key] = { avg: a2, dev: 0.35, n: 1 };
+      else {
+        const d = Math.abs(Math.log(a2 / k.avg));
+        learned[key] = {
+          avg: Math.exp(0.7 * Math.log(k.avg) + 0.3 * Math.log(a2)),
+          dev: 0.7 * (k.dev ?? 0.35) + 0.3 * d,
+          n: k.n + 1,
+        };
+      }
     }
     return learned;
   };

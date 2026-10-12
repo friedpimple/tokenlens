@@ -16,7 +16,14 @@
     { id: 'claude-sonnet', vendor: 'claude', label: 'Claude Sonnet', price: [2, 10],   ctx: 1000000, match: /sonnet/i },
     { id: 'claude-haiku',  vendor: 'claude', label: 'Claude Haiku',  price: [0.1, 0.5], tier: { over: 100000, price: [0.5, 2.5] }, ctx: 200000, match: /haiku/i },
 
-    // OpenAI. GPT-6 family, 1.05M context, from OpenAI's models page.
+    // OpenAI. ChatGPT itself runs GPT-5.6: Luna for free users, Sol on paid
+    // plans. GPT-5.6 Sol is on OpenAI's pricing page (promotional rate, at
+    // least through 2026-11-21; its long-context rate is not modelled).
+    // GPT-5.6 Luna is not on that page; its price is from third-party
+    // trackers. The GPT-6 family is the API's flagship line. 1.05M context
+    // throughout (assumed for the 5.6 models).
+    { id: 'gpt-56-luna', vendor: 'openai', label: 'GPT-5.6 Luna', price: [0.2, 1.2], ctx: 1050000, unverified: true, match: /5\.6[\s-]*luna/i },
+    { id: 'gpt-56-sol',  vendor: 'openai', label: 'GPT-5.6 Sol',  price: [4, 20],    ctx: 1050000, match: /5\.6[\s-]*sol/i },
     { id: 'gpt-astra', vendor: 'openai', label: 'GPT-6 Astra', price: [10, 50], ctx: 1050000, match: /\bastra\b/i },
     { id: 'gpt-sol',   vendor: 'openai', label: 'GPT-6.1 Sol', price: [2, 10],  ctx: 1050000, match: /\bsol\b/i },
     { id: 'gpt-luna',  vendor: 'openai', label: 'GPT-6 Luna',  price: [0.1, 0.5], ctx: 1050000, match: /\bluna\b/i },
@@ -51,7 +58,7 @@
 
   TL.DEFAULT_MODEL = {
     claude: 'claude-sonnet',
-    openai: 'gpt-sol',
+    openai: 'gpt-56-luna',
     gemini: 'gemini-pro',
     deepseek: 'deepseek-flash',
     grok: 'grok',
