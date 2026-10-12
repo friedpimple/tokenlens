@@ -91,7 +91,13 @@ function renderPrices() {
       el.addEventListener('change', () => {
         // An emptied box means nothing was entered, not a price of 0.
         const next = inputs.map((i) => (i.value.trim() === '' ? NaN : Number(i.value)));
-        if (next.some((n) => !Number.isFinite(n) || n < 0)) return renderPrices();
+        if (next.some((n) => !Number.isFinite(n) || n < 0)) {
+          // Put the saved values back in place. Rebuilding the list here would
+          // remove the box while it is losing focus, which throws.
+          const saved = state.cfg.overrides?.[m.id] ?? m.price;
+          inputs.forEach((i, idx) => (i.value = saved[idx]));
+          return;
+        }
         const overrides = { ...state.cfg.overrides };
         if (next[0] === m.price[0] && next[1] === m.price[1]) delete overrides[m.id];
         else overrides[m.id] = next;
